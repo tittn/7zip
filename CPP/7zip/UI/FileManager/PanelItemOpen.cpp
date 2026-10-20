@@ -1504,17 +1504,57 @@ void CPanel::OpenItemInArchive(unsigned index, bool tryInternal, bool tryExterna
 
   const UString fullVirtPath = _currentFolderPrefix + relPath;
 
-  CTempDir tempDirectory;
-  if (!tempDirectory.Create(kTempDirPrefix))
+  // Fork change: use a fixed temp folder named after the archive the file is opened from,
+  // e.g. %TEMP%\7zO_logs.zip\readme.txt instead of %TEMP%\7zO1A2B3C4D\readme.txt.
+  // Opening the same file again (from any 7-Zip window) writes to the same path,
+  // so an editor like Notepad++ offers to reload it.
+  UString arcName;
+  if (!_parentFolders.IsEmpty())
   {
-    MessageBox_LastError();
-    return;
+    const UString &arcPath = _parentFolders.Back().VirtualPath;
+    const int sep = arcPath.ReverseFind_PathSepar();
+    arcName = arcPath.Ptr((unsigned)(sep + 1));
+    if (arcName.Len() > 64)
+      arcName.DeleteFrom(64);
+    arcName = Get_Correct_FsFile_Name(arcName);
   }
-  
-  FString tempDir = tempDirectory.GetPath();
+
+  CTempDir tempDirectory; // used only when there is no archive name
+  FString tempDir;
+  const bool useFixedTempDir = !arcName.IsEmpty();
+  if (useFixedTempDir)
+  {
+    if (!MyGetTempPath(tempDir))
+    {
+      MessageBox_LastError();
+      return;
+    }
+    tempDir += kTempDirPrefix;
+    tempDir.Add_Char('_');
+    tempDir += us2fs(arcName);
+    if (!CreateComplexDir(tempDir))
+    {
+      MessageBox_LastError();
+      return;
+    }
+  }
+  else
+  {
+    if (!tempDirectory.Create(kTempDirPrefix))
+    {
+      MessageBox_LastError();
+      return;
+    }
+    tempDir = tempDirectory.GetPath();
+  }
+
   FString tempDirNorm = tempDir;
   NName::NormalizeDirPathPrefix(tempDirNorm);
   const FString tempFilePath = tempDirNorm + us2fs(Get_Correct_FsFile_Name(name));
+
+  // Fork change: replace a copy left by an earlier open instead of asking to overwrite it.
+  if (useFixedTempDir)
+    DeleteFileAlways(tempFilePath);
 
   CTempFileInfo tempFileInfo;
   tempFileInfo.FileIndex = index;
